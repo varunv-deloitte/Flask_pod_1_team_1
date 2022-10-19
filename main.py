@@ -43,16 +43,16 @@ def getGeoCode(address):
 
 @app.route('/getAddressImages')
 def getImages(lat,lon):
+    print(lat,lon)
     token = "C33AES3-DZ5MTPQ-PSMXB57-7M960HT"
-    zoom=["55m","100m"]
+    zoom=[43,173]
     for z in zoom:
-        maps_url = "https://www.google.com/maps/@%s,%s,%s/data=!3m1!1e3"%(lat,lon,z)
+        maps_url = "https://www.google.com/maps/@%s,%s,%dm/data=!3m1!1e3"%(lat,lon,z)
         URL = "https://shot.screenshotapi.net/screenshot";
         URL += "?token=%s&url=%s&delay=%d" % (token, maps_url, 4000)
-        print(URL)
-
         # sending get request and saving the response as response object
         r = requests.get(url=URL)
+
         # extracting data in json format
         data = r.json()
 
