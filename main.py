@@ -35,7 +35,6 @@ def getGeoCode(address):
     # address = '985 Sterling Pl, Brooklyn, NY 11213, USA'
     url = 'https://nominatim.openstreetmap.org/search/' + urllib.parse.quote(address) + '?format=json'
     response = requests.get(url).json()
-    print(response)
     lat = response[0]["lat"]
     lon = response[0]["lon"]
     data = {"Lat": lat, "Lon": lon}
@@ -76,7 +75,6 @@ def getNearByPlace():
             apiKey = '71e7c3f7389e451fad669ee1ca43b8da'
             nearByPlaceUrl = "https://api.geoapify.com/v2/places?categories=%s&filter=circle:%s,%s,%d&bias=proximity:%s,%s&limit=20&apiKey=%s" % (
                 categories, lan, lat, radius, lan, lat, apiKey)
-            print(nearByPlaceUrl)
             nearByplaces = requests.get(nearByPlaceUrl)
             data = nearByplaces.json()
             return data
