@@ -3,14 +3,30 @@ import requests
 import urllib.parse
 from bs4 import BeautifulSoup
 import json
-
+import psycopg2
 import os
 import urllib.request
 import ssl
+import addfips
+from flask_bcrypt import Bcrypt
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
 app = Flask(__name__)
+bcrypt = Bcrypt(app)
+
+# DB connection
+DB_URL = "postgres://vmxjooje:J7f5hXJxYOwMTVmRbzvBJeTYJWxOsGO-@mouse.db.elephantsql.com/vmxjooje"
+connection = psycopg2.connect(DB_URL)
+
+# DB query
+CREATE_USER_TABLE = (
+    "CREATE TABLE IF NOT EXISTS client (id SERIAL PRIMARY KEY, name TEXT, email TEXT, password TEXT);"
+)
+
+INSERT_USER_DATA = "INSERT INTO client (name,email,password) VALUES (%s, %s, %s) RETURNING id,name,email;"
+
+FIND_USER_IN_DB = "SELECT * FROM client WHERE email=(%s);"
 
 
 @app.route('/')
@@ -86,7 +102,14 @@ def getNearByPlace():
 def getRiskIndex():
     if request.method == 'POST':
         try:
-            # code = request.json['code']
+            state = request.json['state']
+            county = request.json['county']
+            print(state,county)
+            af = addfips.AddFIPS()
+            row = {state, county}
+            af.add_county_fips(row, county_field="county", state_field="state")
+            print(row)
+
             html_text = requests.get("https://hazards.fema.gov/nri/report/viewer?dataLOD=Counties&dataIDs=C23031").text
             soup = BeautifulSoup(html_text, 'lxml')
             risk_score = soup.find('span', class_='summary-row-score-value').text
@@ -108,15 +131,40 @@ def getRiskIndex():
                 if (temp == '--'):
                     temp = '0'
                 score.append(temp)
-            [text,value] = risk_score.split(" ")
-            data = {"Risk_score":value}
-            for i in range(min(len(score),len(heading)) ):
+            [text, value] = risk_score.split(" ")
+            data = {"Risk_score": value}
+            for i in range(min(len(score), len(heading))):
                 data[heading[i]] = score[i]
 
-            return make_response(jsonify(data),200)
+            return make_response(jsonify(data), 200)
 
         except:
             return "Unable to find risk index"
+
+
+@app.route("/signup", methods=['POST'])
+def createUser():
+    if request.method == 'POST':
+        try:
+            data = request.get_json()
+            name = data["name"]
+            email = data["email"]
+            password = data["password"]
+            with connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(CREATE_USER_TABLE)
+                    cursor.execute(FIND_USER_IN_DB, (email,))
+                    res_data = cursor.fetchone()
+                    if res_data:
+                        return {"message": "User already present in DB"}, 400
+                    else:
+                        password_hash = bcrypt.generate_password_hash(password)
+                        cursor.execute(INSERT_USER_DATA, (name, email, password_hash))
+                        res_data = cursor.fetchone()
+            return {"id": res_data[0], "name": res_data[1], "email": res_data[2]}, 201
+
+        except:
+            return "Unable to Signup"
 
 
 if __name__ == '__main__':
