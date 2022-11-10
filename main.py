@@ -2,21 +2,28 @@ from flask import Flask, request, jsonify, make_response, session, redirect, url
 import requests
 import urllib.parse
 from bs4 import BeautifulSoup
-import json
 import psycopg2
 import os
 import urllib.request
 import ssl
 import addfips
-from flask_bcrypt import Bcrypt
+from werkzeug.security import generate_password_hash, check_password_hash
+from dotenv import load_dotenv
 
 # Initialize
 app = Flask(__name__)
-bcrypt = Bcrypt(app)
+app.config["SESSION_PERMANENT"] = False
+app.config["SESSION_TYPE"] = "filesystem"
+app.config['SECRET_KEY'] = "asddaffffa"
+load_dotenv()
+
+# bcrypt = Bcrypt(app)
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # DB connection
-DB_URL = "postgres://vmxjooje:J7f5hXJxYOwMTVmRbzvBJeTYJWxOsGO-@mouse.db.elephantsql.com/vmxjooje"
+DB_URL = os.getenv("DB_URL")
+AWS_ACCESS_KEY= os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS= os.getenv("AWS_SECRET_ACCESS_ID")
 connection = psycopg2.connect(DB_URL)
 
 # DB query
@@ -35,7 +42,34 @@ def getNRI_Code(s, c):
 
 
 def validatePassword(hashPassword, password):
+    print(hashPassword,password)
     return bcrypt.check_password_hash(hashPassword, password)
+
+def uploadtos3(bucket_name,file_path,k):
+    from botocore.config import Config
+    # !pip install boto3
+    import boto3 # pip install boto3
+    my_config = Config(region_name = 'ap-south-1')
+    # Let's use Amazon S3
+    s3 = boto3.resource("s3",config=my_config,aws_access_key_id=AWS_ACCESS_KEY,aws_secret_access_key=AWS_SECRET_ACCESS)
+    # Print out bucket names
+    s3 = boto3.client("s3",config=my_config,aws_access_key_id=AWS_ACCESS_KEY,aws_secret_access_key= AWS_SECRET_ACCESS)
+    s3.upload_file(
+    Filename=file_path,
+    Bucket=bucket_name,
+    Key=k
+    )
+
+def downloadfroms3(bucket_name,k,path_to_store):
+    from botocore.config import Config
+    # !pip install boto3
+    import boto3 # pip install boto3
+    my_config = Config(region_name = 'ap-south-1')
+    # Let's use Amazon S3
+    s3 = boto3.resource("s3",config=my_config,aws_access_key_id=AWS_ACCESS_KEY,aws_secret_access_key=AWS_SECRET_ACCESS)
+    # Print out bucket names
+    s3 = boto3.client("s3",config=my_config,aws_access_key_id=AWS_ACCESS_KEY,aws_secret_access_key=AWS_SECRET_ACCESS)
+    s3.download_file(Bucket=bucket_name, Key=k, Filename=path_to_store)
 
 
 @app.route('/')
@@ -70,7 +104,7 @@ def getGeoCode(address):
 def getImages(lat, lon):
     print(lat, lon)
     token = "C33AES3-DZ5MTPQ-PSMXB57-7M960HT"
-    zoom = [43, 111]
+    zoom = [43]
     for z in zoom:
         maps_url = "https://www.google.com/maps/@%s,%s,%dm/data=!3m1!1e3" % (lat, lon, z)
         URL = "https://shot.screenshotapi.net/screenshot";
@@ -83,8 +117,11 @@ def getImages(lat, lon):
 
         screenshot_url = data["screenshot"]
         # Call the API
-
-        urllib.request.urlretrieve(screenshot_url, "%d%s%s.jpg" % (z, lat, lon))
+        image_url = "%d%s%s.jpg" % (z, lat, lon)
+        urllib.request.urlretrieve(screenshot_url, image_url)
+        print(image_url)
+        # uploadtos3("property-images-bucket","./"+image_url,image_url)
+        # downloadfroms3("property-images-bucket", "best (4).pt", "./S3images/best (4).pt")
 
     return "Image retrieved successfully "
 
@@ -154,6 +191,9 @@ def createUser():
             name = data["name"]
             email = data["email"]
             password = data["password"]
+            if not name or not email or not password:
+                return {"message": "All fields are required ", "auth": False, "isUser": False}, 404
+
             with connection:
                 with connection.cursor() as cursor:
                     cursor.execute(CREATE_USER_TABLE)
@@ -162,8 +202,8 @@ def createUser():
                     if res_data:
                         return {"message": "User already present in DB"}, 400
                     else:
-                        password_hash = bcrypt.generate_password_hash(password)
-                        cursor.execute(INSERT_USER_DATA, (name, email, password_hash))
+                        _hashed_password = generate_password_hash(password)
+                        cursor.execute(INSERT_USER_DATA, (name, email, _hashed_password))
                         res_data = cursor.fetchone()
             return {"id": res_data[0], "name": res_data[1], "email": res_data[2]}, 201
 
@@ -179,6 +219,9 @@ def loginUser():
             email = data["email"]
             password = data["password"]
 
+            if not email or not password:
+                return {"message":"All fields are required ","auth": False, "isUser":False}, 404
+
             with connection:
                 with connection.cursor() as cursor:
                     cursor.execute(FIND_USER_IN_DB, (email,))
@@ -187,13 +230,17 @@ def loginUser():
                     if not isUser:
                         return {"message": "User not registered in DB", "auth": False, "isUser":False}, 404
                     else:
-                        isValidPassword = validatePassword(isUser[2], password)
 
-                        if not isValidPassword:
-                            return {"message": "User password couldn't match", "auth": False, "isUser":True}, 404
+                        user_password_hash = isUser[3]
+                        print(check_password_hash(user_password_hash, password))
+                        if check_password_hash(user_password_hash, password):
+                            session['email']=isUser[2]
+                            return {"auth":True, "isUser":True,  "user":{
+                                "name":isUser[1],
+                                "email":isUser[2]
+                            }}, 200
                         else:
-                            session["email"]=email
-                            return {"auth":True, "isUser":True}, 200
+                            return {"message": "User password couldn't match", "auth": False, "isUser":True}, 404
 
         except:
             return "Login failed"
