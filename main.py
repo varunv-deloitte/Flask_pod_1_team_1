@@ -1,29 +1,53 @@
+# Common import
+import os
+from yolov5.mlmodel import detect
+
+# Backend import
 from flask import Flask, request, jsonify, make_response, session, redirect, url_for
 import requests
 import urllib.parse
 from bs4 import BeautifulSoup
 import psycopg2
-import os
 import urllib.request
 import ssl
 import addfips
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
 
+# ML model import
+import argparse
+import sys
+from pathlib import Path
+
+import torch
+import torch.backends.cudnn as cudnn
+
+#
+# from models.common import DetectMultiBackend
+# from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadStreams
+# from utils.general import (LOGGER, check_file, check_img_size, check_imshow, check_requirements, colorstr, cv2,
+#                            increment_path, non_max_suppression, print_args, scale_coords, strip_optimizer, xyxy2xywh)
+# from utils.plots import Annotator, colors, save_one_box
+# from utils.torch_utils import select_device, time_sync
+
+
+load_dotenv()
+
+# env variables
+DB_URL = os.getenv("DB_URL")
+AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS = os.getenv("AWS_SECRET_ACCESS_ID")
+SECRET = os.getenv("SECRET")
+
 # Initialize
 app = Flask(__name__)
 app.config["SESSION_PERMANENT"] = False
 app.config["SESSION_TYPE"] = "filesystem"
-app.config['SECRET_KEY'] = "asddaffffa"
-load_dotenv()
+app.config['SECRET_KEY'] = SECRET
 
-# bcrypt = Bcrypt(app)
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # DB connection
-DB_URL = os.getenv("DB_URL")
-AWS_ACCESS_KEY= os.getenv("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS= os.getenv("AWS_SECRET_ACCESS_ID")
 connection = psycopg2.connect(DB_URL)
 
 # DB query
@@ -41,36 +65,38 @@ def getNRI_Code(s, c):
     return "c" + str(x)
 
 
-def validatePassword(hashPassword, password):
-    print(hashPassword,password)
-    return bcrypt.check_password_hash(hashPassword, password)
-
-def uploadtos3(bucket_name,file_path,k):
+def uploadtos3(bucket_name, file_path, k):
     from botocore.config import Config
     # !pip install boto3
-    import boto3 # pip install boto3
-    my_config = Config(region_name = 'ap-south-1')
+    import boto3  # pip install boto3
+    my_config = Config(region_name='ap-south-1')
     # Let's use Amazon S3
-    s3 = boto3.resource("s3",config=my_config,aws_access_key_id=AWS_ACCESS_KEY,aws_secret_access_key=AWS_SECRET_ACCESS)
+    s3 = boto3.resource("s3", config=my_config, aws_access_key_id=AWS_ACCESS_KEY,
+                        aws_secret_access_key=AWS_SECRET_ACCESS)
     # Print out bucket names
-    s3 = boto3.client("s3",config=my_config,aws_access_key_id=AWS_ACCESS_KEY,aws_secret_access_key= AWS_SECRET_ACCESS)
+    s3 = boto3.client("s3", config=my_config, aws_access_key_id=AWS_ACCESS_KEY, aws_secret_access_key=AWS_SECRET_ACCESS)
     s3.upload_file(
-    Filename=file_path,
-    Bucket=bucket_name,
-    Key=k
+        Filename=file_path,
+        Bucket=bucket_name,
+        Key=k
     )
 
-def downloadfroms3(bucket_name,k,path_to_store):
+
+def downloadfroms3(bucket_name, k, path_to_store):
     from botocore.config import Config
     # !pip install boto3
-    import boto3 # pip install boto3
-    my_config = Config(region_name = 'ap-south-1')
+    import boto3  # pip install boto3
+    my_config = Config(region_name='ap-south-1')
     # Let's use Amazon S3
-    s3 = boto3.resource("s3",config=my_config,aws_access_key_id=AWS_ACCESS_KEY,aws_secret_access_key=AWS_SECRET_ACCESS)
+    s3 = boto3.resource("s3", config=my_config, aws_access_key_id=AWS_ACCESS_KEY,
+                        aws_secret_access_key=AWS_SECRET_ACCESS)
     # Print out bucket names
-    s3 = boto3.client("s3",config=my_config,aws_access_key_id=AWS_ACCESS_KEY,aws_secret_access_key=AWS_SECRET_ACCESS)
+    s3 = boto3.client("s3", config=my_config, aws_access_key_id=AWS_ACCESS_KEY, aws_secret_access_key=AWS_SECRET_ACCESS)
     s3.download_file(Bucket=bucket_name, Key=k, Filename=path_to_store)
 
+
+# def detect():
+# !python detect.py - -weights / content / gdrive / MyDrive / ml / best.pt - -img416 - -conf0.4 - -source.. / yolov5 / PropertyDataset / test / images - -hide - conf
 
 @app.route('/')
 def hello_world():
@@ -120,6 +146,7 @@ def getImages(lat, lon):
         image_url = "%d%s%s.jpg" % (z, lat, lon)
         urllib.request.urlretrieve(screenshot_url, image_url)
         print(image_url)
+        detect()
         # uploadtos3("property-images-bucket","./"+image_url,image_url)
         # downloadfroms3("property-images-bucket", "best (4).pt", "./S3images/best (4).pt")
 
@@ -220,7 +247,7 @@ def loginUser():
             password = data["password"]
 
             if not email or not password:
-                return {"message":"All fields are required ","auth": False, "isUser":False}, 404
+                return {"message": "All fields are required ", "auth": False, "isUser": False}, 404
 
             with connection:
                 with connection.cursor() as cursor:
@@ -228,28 +255,28 @@ def loginUser():
                     isUser = cursor.fetchone()
 
                     if not isUser:
-                        return {"message": "User not registered in DB", "auth": False, "isUser":False}, 404
+                        return {"message": "User not registered in DB", "auth": False, "isUser": False}, 404
                     else:
 
                         user_password_hash = isUser[3]
                         print(check_password_hash(user_password_hash, password))
                         if check_password_hash(user_password_hash, password):
-                            session['email']=isUser[2]
-                            return {"auth":True, "isUser":True,  "user":{
-                                "name":isUser[1],
-                                "email":isUser[2]
+                            session['email'] = isUser[2]
+                            return {"auth": True, "isUser": True, "user": {
+                                "name": isUser[1],
+                                "email": isUser[2]
                             }}, 200
                         else:
-                            return {"message": "User password couldn't match", "auth": False, "isUser":True}, 404
+                            return {"message": "User password couldn't match", "auth": False, "isUser": True}, 404
 
         except:
             return "Login failed"
 
+
 @app.route('/logout')
 def logout():
-    session.pop('email',None)
+    session.pop('email', None)
     return redirect(url_for("/login"))
-
 
 
 if __name__ == '__main__':
