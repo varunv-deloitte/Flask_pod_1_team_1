@@ -1,7 +1,14 @@
 # Common import
 import os
-from yolov5.mlmodel import detect
+# from yolov5.mlmodel import detect
+from segmentation import get_yolov5
 import functools
+import re
+import torch
+from PIL import Image
+import io
+import json
+import cv2
 
 # Backend import
 from flask import Flask, request, jsonify, make_response, session, redirect, url_for
@@ -46,6 +53,7 @@ app.config["SESSION_PERMANENT"] = False
 app.config["SESSION_TYPE"] = "filesystem"
 app.config['SECRET_KEY'] = SECRET
 
+model = get_yolov5()
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # DB connection
@@ -111,8 +119,41 @@ def downloadfroms3(bucket_name, k, path_to_store):
 
 @app.route('/')
 def hello_world():
-    print(request.files['image'])
     return "Hello!!!!!!!!"
+
+
+@app.route("/predict", methods=['GET', 'POST'])
+def predict():
+    if request.method != "POST":
+        return "Not"
+
+    if request.files.get("image"):
+        # Method 1
+        # with request.files["image"] as f:
+        #     im = Image.open(io.BytesIO(f.read()))
+
+        # Method 2
+        im_file = request.files["image"]
+        im_bytes = im_file.read()
+        input_image = Image.open(io.BytesIO(im_bytes))
+
+        results = model(input_image, size=640)
+        detect_res = results.pandas().xyxy[0].to_json(orient="records")  # JSON img1 predictions
+        detect_res = json.loads(detect_res)
+        # cv2.imwrite("./S3images", results.save())
+        # results.save(save_dir="./S3images")
+        # results.ims  # array of original images (as np array) passed to model for inference
+        # results.render()  # updates results.ims with boxes and labels
+        # print(results.render())
+        # for im in results.ims:
+        #     buffered = io.BytesIO()
+        #     im_base64 = Image.fromarray(im)
+        #     im_base64.save(buffered, format="JPEG")
+        # for img in results.imgs:
+        #     bytes_io = io.BytesIO()
+        #     img_base64 = Image.fromarray(img)
+        #     img_base64.save(bytes_io, format="jpeg")
+        return {"result": detect_res}
 
 
 @app.route('/getUserAddress', methods=['POST'])
@@ -230,10 +271,26 @@ def createUser():
         try:
             data = request.get_json()
             name = data["name"]
-            email = data["email"]
+            email = data["email"].lower()
             password = data["password"]
-            if not name or not email or not password:
+
+            regex_email = r'^[a-z0-9]+[\._]?[a-z0-9]+[@]\w+[.]\w{2,3}$'
+            regex_password = "^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!#%*?&]{6,20}$"
+            pattern = re.compile(regex_password)
+            isPassword = re.search(pattern, password)
+
+            if not name.isalpha():
+                return {"message": "Name should not contain numbers", "auth": False, "isUser": False}, 404
+
+            if not name or not email or not password or not len(name) > 2:
                 return {"message": "All fields are required ", "auth": False, "isUser": False}, 404
+
+            if not re.fullmatch(regex_email, email):
+                return {"message": "Enter the valid email", "auth": False, "isUser": False}, 404
+
+            if not isPassword:
+                return {"message": "Password Should be between 6 to 20 characters long and contain at least one uppercase,lowercase,special character and one number", "auth": False, "isUser": False}, 404
+
 
             with connection:
                 with connection.cursor() as cursor:
@@ -257,7 +314,7 @@ def loginUser():
     if request.method == 'POST':
         try:
             data = request.get_json()
-            email = data["email"]
+            email = data["email"].lower()
             password = data["password"]
 
             if not email or not password:
