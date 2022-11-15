@@ -1,6 +1,7 @@
 # Common import
 import os
 from yolov5.mlmodel import detect
+import functools
 
 # Backend import
 from flask import Flask, request, jsonify, make_response, session, redirect, url_for
@@ -59,6 +60,16 @@ FIND_USER_IN_DB = "SELECT * FROM client WHERE email=(%s);"
 
 
 # Helper functions
+def login_required(func):
+    @functools.wraps(func)
+    def secure_function(*args, **kwargs):
+        if "email" not in session:
+            return redirect(url_for("login", next=request.url))
+        return func(*args, **kwargs)
+
+    return secure_function
+
+
 def getNRI_Code(s, c):
     af = addfips.AddFIPS()
     x = af.get_county_fips(c, state=s)
@@ -100,6 +111,7 @@ def downloadfroms3(bucket_name, k, path_to_store):
 
 @app.route('/')
 def hello_world():
+    print(request.files['image'])
     return "Hello!!!!!!!!"
 
 
@@ -154,6 +166,7 @@ def getImages(lat, lon):
 
 
 @app.route("/getnearByplace", methods=['POST'])
+# @login_required
 def getNearByPlace():
     if request.method == 'POST':
         try:
@@ -172,6 +185,7 @@ def getNearByPlace():
 
 
 @app.route("/getriskindex", methods=['POST'])
+# @login_required
 def getRiskIndex():
     if request.method == 'POST':
         # try:
